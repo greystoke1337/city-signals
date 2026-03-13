@@ -628,13 +628,8 @@ function connectAIS() {
   const statusEl = document.getElementById('ais-status');
   if (statusEl) statusEl.textContent = 'CONNECTING…';
   try {
-    aisSocket = new WebSocket('wss://stream.aisstream.io/v0/stream');
+    aisSocket = new WebSocket('wss://city-signals-production.up.railway.app');
     aisSocket.onopen = () => {
-      aisSocket.send(JSON.stringify({
-        APIKey: AIS_KEY,
-        BoundingBoxes: AIS_BOXES,
-        FilterMessageTypes: ['PositionReport','ShipStaticData']
-      }));
       if (statusEl) statusEl.textContent = 'LIVE';
     };
     aisSocket.onmessage = (evt) => {
