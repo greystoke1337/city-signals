@@ -74,7 +74,9 @@ function connectAIS() {
       const meta = msg.Metadata || {};
       const out = { MessageType: msg.MessageType, Metadata: meta, Message: msg.Message };
       broadcast(out);
-    } catch (e) {}
+    } catch (e) {
+      console.error('[ais] Failed to parse message:', e.message);
+    }
   });
 
   socket.on('error', (err) => {
@@ -86,5 +88,3 @@ function connectAIS() {
     setTimeout(connectAIS, 5000);
   });
 }
-
-connectAIS();
