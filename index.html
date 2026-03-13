@@ -532,8 +532,8 @@ function initMap() {
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  map.on('moveend', drawHeatmap);
-  map.on('zoomend', drawHeatmap);
+  map.on('move', drawHeatmap);
+  map.on('zoom', drawHeatmap);
 
   initHeatCanvas();
 }
@@ -557,7 +557,12 @@ function latLngToPixel(lat, lng) {
   return p;
 }
 
+let _heatRaf = 0;
 function drawHeatmap() {
+  cancelAnimationFrame(_heatRaf);
+  _heatRaf = requestAnimationFrame(_drawHeatmapNow);
+}
+function _drawHeatmapNow() {
   if (!heatCtx || !map) return;
   heatCtx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
   if (!state.layers.traffic && !state.layers.parking) return;
