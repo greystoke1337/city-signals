@@ -276,8 +276,8 @@
     </div>
 
     <div style="font-size:9px;color:var(--muted);line-height:1.6;padding-top:4px;border-top:1px solid var(--border)">
-      Live data: Open-Meteo API. Traffic &amp; parking: simulated TfNSW model.
-      Events: representative data. Register free at opendata.transport.nsw.gov.au for live feeds.
+      Live data: Open-Meteo API, TfNSW Open Data (traffic hazards &amp; car park occupancy).
+      Events: representative data. Simulated fallback when live APIs unavailable.
     </div>
   </div>
 
@@ -298,8 +298,11 @@
 
 <script>
 // ── State ──────────────────────────────────────────────────────
-const state = { layers: { traffic: true, parking: true, events: true, air: true, maritime: true }, weather: {}, air: {} };
-let map, heatCanvas, heatCtx, trafficMarkers = [], parkingMarkers = [], eventMarkers = [];
+const PROXY_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:8765'
+  : 'https://city-signals-production.up.railway.app';
+const state = { layers: { traffic: true, parking: true, events: true, air: true, maritime: true }, weather: {}, air: {}, liveTraffic: null, liveCarparks: null };
+let map, heatCanvas, heatCtx, trafficMarkers = [], parkingMarkers = [], eventMarkers = [], hazardMarkers = [];
 
 // ── Sydney geography ───────────────────────────────────────────
 const SYD = { lat: -33.8688, lng: 151.2093 };
@@ -419,6 +422,78 @@ async function fetchAirQuality() {
   } catch(e) { console.warn('Air quality fetch failed', e); }
 }
 
+// ── TfNSW Live Traffic Hazards ───────────────────────────────
+async function fetchTrafficHazards() {
+  try {
+    const r = await fetch(PROXY_BASE + '/api/traffic');
+    const d = await r.json();
+    // GeoJSON FeatureCollection or array of FeatureCollections
+    const features = d.features || (Array.isArray(d) ? d.flatMap(c => c.features || []) : []);
+    // Filter to Sydney bounding box
+    const sydneyHazards = features.filter(f => {
+      const coords = f.geometry?.coordinates;
+      if (!coords) return false;
+      const [lng, lat] = coords;
+      return lat > -34.05 && lat < -33.55 && lng > 150.9 && lng < 151.5;
+    });
+    state.liveTraffic = sydneyHazards;
+    console.log(`[tfnsw] ${sydneyHazards.length} traffic hazards in Sydney`);
+    updateHazardMarkers();
+    drawHeatmap();
+    updateScore();
+  } catch(e) {
+    console.warn('[tfnsw] Traffic hazards fetch failed, using simulation', e);
+    state.liveTraffic = null;
+  }
+}
+
+function updateHazardMarkers() {
+  hazardMarkers.forEach(m => map.removeLayer(m));
+  hazardMarkers = [];
+  if (!state.layers.traffic || !state.liveTraffic || !map) return;
+  state.liveTraffic.forEach(f => {
+    const coords = f.geometry?.coordinates;
+    if (!coords) return;
+    const [lng, lat] = coords;
+    const p = f.properties || {};
+    const headline = p.headline || p.displayName || 'Incident';
+    const advice = [p.adviceA, p.adviceB].filter(Boolean).join(' ');
+    const roads = (p.roads || []).map(r => r.mainStreet || r.suburb).filter(Boolean).join(', ');
+    const isMajor = (p.impactingNetwork === true) || p.arrangementElements;
+    const icon = L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="width:20px;height:20px;border-radius:50%;background:${isMajor?'#f87171':'#fb923c'};border:2px solid rgba(255,255,255,0.3);display:flex;align-items:center;justify-content:center;font-size:10px">⚠</div>`,
+      iconSize: [20,20], iconAnchor: [10,10]
+    });
+    const m = L.marker([lat, lng], { icon })
+      .bindPopup(`
+        <div class="popup-title">${headline}</div>
+        ${roads ? `<div class="popup-row"><span class="popup-key">Roads</span><span class="popup-val">${roads}</span></div>` : ''}
+        ${advice ? `<div class="popup-row"><span class="popup-key">Advice</span><span class="popup-val">${advice}</span></div>` : ''}
+        <div class="popup-row"><span class="popup-key">Created</span><span class="popup-val">${p.created ? new Date(p.created).toLocaleString() : '—'}</span></div>
+      `)
+      .addTo(map);
+    hazardMarkers.push(m);
+  });
+}
+
+// ── TfNSW Car Park Occupancy ────────────────────────────────
+async function fetchCarparks() {
+  try {
+    const r = await fetch(PROXY_BASE + '/api/carpark');
+    const d = await r.json();
+    // Response is an array of facility objects
+    const facilities = Array.isArray(d) ? d : (d.facilities || [d]);
+    state.liveCarparks = facilities;
+    console.log(`[tfnsw] ${facilities.length} car parks loaded`);
+    addParkingMarkers();
+  } catch(e) {
+    console.warn('[tfnsw] Car park fetch failed, using simulation', e);
+    state.liveCarparks = null;
+    addParkingMarkers();
+  }
+}
+
 // ── Events (simulated with realistic Sydney data) ──────────────
 function loadEvents() {
   const today = new Date();
@@ -495,6 +570,16 @@ function drawHeatmap() {
     TRAFFIC_NODES.forEach(n => {
       nodes.push({ lat: n.lat, lng: n.lng, weight: jitter(n.base * hFactor * dFactor, 0.05), type: 'traffic' });
     });
+    // Overlay live hazard locations as high-weight nodes
+    if (state.liveTraffic) {
+      state.liveTraffic.forEach(f => {
+        const coords = f.geometry?.coordinates;
+        if (!coords) return;
+        const [lng, lat] = coords;
+        const isMajor = f.properties?.impactingNetwork === true;
+        nodes.push({ lat, lng, weight: isMajor ? 0.95 : 0.75, type: 'traffic' });
+      });
+    }
   }
   if (state.layers.parking) {
     PARKING_NODES.forEach(n => {
@@ -564,6 +649,41 @@ function addParkingMarkers() {
   parkingMarkers.forEach(m => map.removeLayer(m));
   parkingMarkers = [];
   if (!state.layers.parking) return;
+
+  // Use live car park data if available
+  if (state.liveCarparks && state.liveCarparks.length > 0) {
+    state.liveCarparks.forEach(f => {
+      const name = f.facility_name || f.facilityName || f.name || 'Car Park';
+      const lat = f.latitude || f.location?.latitude;
+      const lng = f.longitude || f.location?.longitude;
+      if (!lat || !lng) return;
+      const zones = f.zones || f.occupancy?.zones || [];
+      let total = 0, occupied = 0;
+      zones.forEach(z => {
+        total += z.spots || z.total || 0;
+        occupied += z.occupancy || z.occupied || 0;
+      });
+      // Fallback: use top-level occupancy fields
+      if (total === 0) { total = f.spots || f.capacity || 100; occupied = f.occupancy?.total || 0; }
+      const avail = Math.max(0, total - occupied);
+      const pct = total > 0 ? Math.round(occupied / total * 100) : 0;
+      const emoji = pct > 85 ? '🔴' : pct > 60 ? '🟡' : '🟢';
+      const m = L.marker([lat, lng], { icon: createIcon('🅿', '#0ea5e9') })
+        .bindPopup(`
+          <div class="popup-title">${name}</div>
+          <div class="popup-row"><span class="popup-key">Capacity</span><span class="popup-val">${total}</span></div>
+          <div class="popup-row"><span class="popup-key">Occupied</span><span class="popup-val">${occupied} (${pct}%)</span></div>
+          <div class="popup-row"><span class="popup-key">Available</span><span class="popup-val" style="color:${avail<50?'#f87171':'#4ade80'}">${avail} spaces</span></div>
+          <div class="popup-row"><span class="popup-key">Status</span><span class="popup-val">${emoji} ${pct>85?'Nearly full':pct>60?'Busy':'Available'}</span></div>
+          <div class="popup-row"><span class="popup-key">Source</span><span class="popup-val" style="color:var(--muted)">TfNSW Live</span></div>
+        `)
+        .addTo(map);
+      parkingMarkers.push(m);
+    });
+    return;
+  }
+
+  // Fallback: simulated parking data
   const hFactor = getHourFactor() * getDayFactor();
   PARKING_NODES.forEach(n => {
     const occ = Math.round(jitter(n.base * hFactor, 0.05) * n.total);
@@ -735,7 +855,9 @@ function updateScore() {
   const hFactor = getHourFactor();
   const dFactor = getDayFactor();
   const base = TRAFFIC_NODES.reduce((s,n) => s + n.base, 0) / TRAFFIC_NODES.length;
-  const score = Math.round(jitter(base * hFactor * dFactor, 0.04) * 100);
+  // Boost score based on live hazard count
+  const hazardBoost = state.liveTraffic ? Math.min(0.2, state.liveTraffic.length * 0.02) : 0;
+  const score = Math.min(100, Math.round(jitter(base * hFactor * dFactor + hazardBoost, 0.04) * 100));
   const h = new Date().getHours();
   const isPeak = (h >= 7 && h <= 9) || (h >= 16 && h <= 19);
 
@@ -765,6 +887,7 @@ function toggleLayer(btn) {
   if (layer !== 'maritime') btn.querySelector('.layer-status').textContent = state.layers[layer] ? (layer === 'events' ? 'TODAY' : 'LIVE') : 'OFF';
   else if (!state.layers.maritime) btn.querySelector('.layer-status').textContent = 'OFF';
   drawHeatmap();
+  if (layer === 'traffic') updateHazardMarkers();
   if (layer === 'events') addEventMarkers(window._events || []);
   if (layer === 'parking') addParkingMarkers();
   if (layer === 'maritime') {
@@ -793,7 +916,7 @@ async function boot() {
   initMap();
 
   // Load data
-  await Promise.all([fetchWeather(), fetchAirQuality()]);
+  await Promise.all([fetchWeather(), fetchAirQuality(), fetchTrafficHazards(), fetchCarparks()]);
   const events = loadEvents();
   window._events = events;
 
@@ -810,6 +933,8 @@ async function boot() {
   setInterval(() => {
     fetchWeather();
     fetchAirQuality();
+    fetchTrafficHazards();
+    fetchCarparks();
     updateScore();
     drawHeatmap();
     addParkingMarkers();
