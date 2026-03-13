@@ -749,7 +749,8 @@ function connectAIS() {
   const statusEl = document.getElementById('ais-status');
   if (statusEl) statusEl.textContent = 'CONNECTING…';
   try {
-    aisSocket = new WebSocket('wss://city-signals-production.up.railway.app');
+    const wsUrl = PROXY_BASE.replace(/^http/, 'ws');
+    aisSocket = new WebSocket(wsUrl);
     aisSocket.onopen = () => {
       if (statusEl) statusEl.textContent = 'LIVE';
     };
