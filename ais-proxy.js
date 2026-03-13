@@ -14,7 +14,7 @@
 const http = require('http');
 const { WebSocketServer, WebSocket } = require('ws');
 
-const AIS_KEY   = process.env.AIS_KEY || 'ed6a70f43dbb2d5f0597ddde25dbff68aa2be2fd';
+const AIS_KEY   = process.env.AIS_KEY || 'e52201e85895a1b69f671f22a80a7d62088ccb2a';
 const AIS_URL   = 'wss://stream.aisstream.io/v0/stream';
 const PORT      = process.env.PORT || 8765;
 
