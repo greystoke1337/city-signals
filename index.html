@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>City Signals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --surface2: #181d24;
+    --border: rgba(255,255,255,0.07);
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --accent: #f97316;
+    --accent2: #38bdf8;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #facc15;
+    --mono: 'DM Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); overflow: hidden; }
+
+  /* Layout */
+  #app { display: grid; grid-template-columns: 320px 1fr; grid-template-rows: 56px 1fr; height: 100vh; }
+
+  /* Header */
+  #header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 20px;
+    padding: 0 20px;
+  }
+  .logo { font-family: var(--display); font-size: 20px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+  .logo span { color: var(--text); font-weight: 400; }
+  .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+  #live-time { font-size: 11px; color: var(--muted); margin-left: auto; letter-spacing: 1px; }
+  #weather-bar { font-size: 11px; color: var(--muted); display: flex; gap: 16px; }
+  .wval { color: var(--text); }
+
+  /* Sidebar */
+  #sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  #sidebar::-webkit-scrollbar { width: 3px; }
+  #sidebar::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* Sidebar sections */
+  .section-title {
+    font-family: var(--display); font-size: 10px; font-weight: 700;
+    letter-spacing: 2px; color: var(--muted); text-transform: uppercase;
+    padding: 4px 0; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+  }
+
+  /* Layer toggles */
+  .layer-btn {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    cursor: pointer; transition: all 0.15s; margin-bottom: 6px;
+    color: var(--text); font-family: var(--mono); font-size: 12px;
+    user-select: none;
+  }
+  .layer-btn:hover { border-color: rgba(255,255,255,0.15); }
+  .layer-btn.active { border-color: var(--accent); background: rgba(249,115,22,0.08); }
+  .layer-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .layer-label { flex: 1; }
+  .layer-status { font-size: 10px; color: var(--muted); }
+  .layer-btn.active .layer-status { color: var(--accent); }
+
+  /* Metric cards */
+  .metric-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    display: grid; grid-template-columns: 1fr auto; gap: 4px; margin-bottom: 6px;
+  }
+  .metric-label { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; grid-column: 1; }
+  .metric-value { font-family: var(--display); font-size: 22px; font-weight: 800; grid-row: 2; color: var(--text); }
+  .metric-unit { font-size: 10px; color: var(--muted); align-self: end; padding-bottom: 3px; }
+  .metric-bar { grid-column: 1/-1; height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .metric-fill { height: 100%; border-radius: 2px; transition: width 1s ease; }
+
+  /* Events list */
+  .event-item {
+    padding: 10px 12px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 6px; cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .event-item:hover { border-color: rgba(255,255,255,0.2); }
+  .event-name { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
+  .event-meta { font-size: 10px; color: var(--muted); }
+  .event-impact { display: inline-block; font-size: 9px; padding: 2px 6px; border-radius: 3px; margin-top: 5px; font-weight: 500; }
+  .impact-high { background: rgba(248,113,113,0.15); color: var(--red); }
+  .impact-med { background: rgba(250,204,21,0.15); color: var(--yellow); }
+  .impact-low { background: rgba(74,222,128,0.15); color: var(--green); }
+
+  /* Congestion score */
+  #congestion-score {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px; text-align: center;
+  }
+  .score-label { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .score-value { font-family: var(--display); font-size: 48px; font-weight: 800; line-height: 1; }
+  .score-desc { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .score-ring { width: 80px; height: 80px; margin: 0 auto 12px; position: relative; }
+  .score-ring svg { transform: rotate(-90deg); }
+
+  /* Map */
+  #map { background: #0a0c0f; }
+  #map .leaflet-tile { filter: brightness(0.85) saturate(0.5); }
+  .leaflet-control-attribution { display: none; }
+
+  /* Map overlay panel */
+  #map-overlay {
+    position: absolute; bottom: 20px; right: 20px; z-index: 1000;
+    background: rgba(17,20,24,0.92); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; backdrop-filter: blur(8px);
+    min-width: 180px;
+  }
+  .overlay-title { font-size: 9px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 8px; }
+  .legend-row { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .legend-swatch { width: 24px; height: 8px; border-radius: 2px; }
+
+  /* Heatmap canvas overlay */
+  #heatmap-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 400; }
+
+  /* Marker styles */
+  .custom-marker { cursor: pointer; }
+  .marker-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; border: 2px solid rgba(255,255,255,0.2); }
+
+  /* Leaflet popup */
+  .leaflet-popup-content-wrapper {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); color: var(--text);
+  }
+  .leaflet-popup-tip { background: var(--surface2); }
+  .leaflet-popup-content { font-family: var(--mono); font-size: 12px; margin: 12px 14px; }
+  .popup-title { font-family: var(--display); font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .popup-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .popup-row:last-child { border-bottom: none; }
+  .popup-key { color: var(--muted); }
+  .popup-val { font-weight: 500; }
+
+  /* Loading */
+  #loading { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+  .loading-text { font-family: var(--display); font-size: 28px; font-weight: 800; color: var(--accent); }
+  .loading-sub { font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+  .loading-bar { width: 200px; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+  .loading-progress { height: 100%; background: var(--accent); border-radius: 1px; animation: load 2s ease forwards; }
+  @keyframes load { from{width:0} to{width:100%} }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="loading-text">CITY SIGNALS</div>
+  <div class="loading-sub">LOADING CITY DATA</div>
+  <div class="loading-bar"><div class="loading-progress"></div></div>
+</div>
+
+<div id="app" style="display:none">
+  <div id="header">
+    <div class="pulse-dot"></div>
+    <div class="logo">CITY <span>SIGNALS</span></div>
+    <div id="weather-bar">
+      <span>🌡 <span class="wval" id="hw-temp">—</span>°C</span>
+      <span>💨 <span class="wval" id="hw-wind">—</span> km/h</span>
+      <span>🌧 <span class="wval" id="hw-rain">—</span>mm</span>
+      <span>🌫 PM2.5 <span class="wval" id="hw-pm">—</span> μg/m³</span>
+    </div>
+    <div id="live-time">—</div>
+  </div>
+
+  <div id="sidebar">
+
+    <!-- Congestion score -->
+    <div id="congestion-score">
+      <div class="score-label">City Congestion Index</div>
+      <div class="score-ring">
+        <svg width="80" height="80" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"/>
+          <circle id="score-arc" cx="40" cy="40" r="34" fill="none" stroke="#f97316" stroke-width="8"
+            stroke-dasharray="213.6" stroke-dashoffset="213.6" stroke-linecap="round" transition="stroke-dashoffset 1.5s ease"/>
+        </svg>
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center">
+          <div class="score-value" id="score-num" style="font-size:22px">—</div>
+        </div>
+      </div>
+      <div class="score-desc" id="score-desc">Calculating…</div>
+    </div>
+
+    <!-- Layers -->
+    <div>
+      <div class="section-title">Map Layers</div>
+      <div class="layer-btn active" data-layer="traffic" onclick="toggleLayer(this)">
+        <div class="layer-dot" style="background:#f97316"></div>
+        <div class="layer-label">Traffic Heat</div>
+        <div class="layer-status">LIVE</div>
+      </div>
+      <div class="layer-btn active" data-layer="parking" onclick="toggleLayer(this)">
+        <div class="layer-dot" style="background:#38bdf8"></div>
+        <div class="layer-label">Parking Pressure</div>
+        <div class="layer-status">LIVE</div>
+      </div>
+      <div class="layer-btn active" data-layer="events" onclick="toggleLayer(this)">
+        <div class="layer-dot" style="background:#a78bfa"></div>
+        <div class="layer-label">Major Events</div>
+        <div class="layer-status">TODAY</div>
+      </div>
+      <div class="layer-btn active" data-layer="air" onclick="toggleLayer(this)">
+        <div class="layer-dot" style="background:#4ade80"></div>
+        <div class="layer-label">Air Quality</div>
+        <div class="layer-status">LIVE</div>
+      </div>
+      <div class="layer-btn active" data-layer="maritime" onclick="toggleLayer(this)">
+        <div class="layer-dot" style="background:#22d3ee"></div>
+        <div class="layer-label">Maritime Traffic</div>
+        <div class="layer-status" id="ais-status">CONNECTING…</div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div>
+      <div class="section-title">Environment</div>
+      <div class="metric-card">
+        <div class="metric-label">AIR QUALITY INDEX</div>
+        <div class="metric-unit" id="aqi-grade">—</div>
+        <div class="metric-value" id="aqi-val">—</div>
+        <div class="metric-bar"><div class="metric-fill" id="aqi-bar" style="background:#4ade80;width:0%"></div></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">OZONE (O₃)</div>
+        <div class="metric-unit">μg/m³</div>
+        <div class="metric-value" id="ozone-val">—</div>
+        <div class="metric-bar"><div class="metric-fill" id="ozone-bar" style="background:#38bdf8;width:0%"></div></div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">NO₂ (NITROGEN DIOXIDE)</div>
+        <div class="metric-unit">μg/m³</div>
+        <div class="metric-value" id="no2-val">—</div>
+        <div class="metric-bar"><div class="metric-fill" id="no2-bar" style="background:#facc15;width:0%"></div></div>
+      </div>
+    </div>
+
+    <!-- Maritime -->
+    <div>
+      <div class="section-title">Harbour &amp; Port</div>
+      <div class="metric-card">
+        <div class="metric-label">VESSELS IN RANGE</div>
+        <div class="metric-unit" id="vessel-type-label">AIS live</div>
+        <div class="metric-value" id="vessel-count">—</div>
+        <div class="metric-bar"><div class="metric-fill" id="vessel-bar" style="background:#22d3ee;width:0%"></div></div>
+      </div>
+      <div id="vessel-list" style="font-size:10px;color:var(--muted);line-height:1.8;padding:4px 2px;max-height:80px;overflow-y:auto"></div>
+    </div>
+
+    <!-- Events -->
+    <div>
+      <div class="section-title">Major Events Today</div>
+      <div id="events-list">
+        <div style="font-size:11px;color:var(--muted);padding:8px 0">Loading events…</div>
+      </div>
+    </div>
+
+    <div style="font-size:9px;color:var(--muted);line-height:1.6;padding-top:4px;border-top:1px solid var(--border)">
+      Live data: Open-Meteo API. Traffic &amp; parking: simulated TfNSW model.
+      Events: representative data. Register free at opendata.transport.nsw.gov.au for live feeds.
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div style="position:relative">
+    <div id="map" style="height:100%"></div>
+    <canvas id="heatmap-canvas"></canvas>
+    <div id="map-overlay">
+      <div class="overlay-title">Heat Scale</div>
+      <div class="legend-row"><div class="legend-swatch" style="background:#22d3ee;opacity:0.8"></div>Vessel (AIS)</div>
+      <div class="legend-row"><div class="legend-swatch" style="background:rgba(74,222,128,0.8)"></div>Clear</div>
+      <div class="legend-row"><div class="legend-swatch" style="background:rgba(250,204,21,0.8)"></div>Moderate</div>
+      <div class="legend-row"><div class="legend-swatch" style="background:rgba(249,115,22,0.8)"></div>Heavy</div>
+      <div class="legend-row"><div class="legend-swatch" style="background:rgba(248,113,113,0.9)"></div>Severe</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+const state = { layers: { traffic: true, parking: true, events: true, air: true, maritime: true }, weather: {}, air: {} };
+let map, heatCanvas, heatCtx, trafficMarkers = [], parkingMarkers = [], eventMarkers = [];
+
+// ── Sydney geography ───────────────────────────────────────────
+const SYD = { lat: -33.8688, lng: 151.2093 };
+
+// Traffic hotspots (major roads/intersections) with realistic hour-based weights
+const TRAFFIC_NODES = [
+  { lat:-33.8688,lng:151.2093,name:"CBD / George St",base:0.9 },
+  { lat:-33.8688,lng:151.1950,name:"Pyrmont Bridge Rd",base:0.7 },
+  { lat:-33.8753,lng:151.2044,name:"Broadway / City Rd",base:0.8 },
+  { lat:-33.8600,lng:151.2093,name:"Harbour Bridge South",base:0.85 },
+  { lat:-33.8350,lng:151.2093,name:"North Sydney CBD",base:0.65 },
+  { lat:-33.8900,lng:151.1850,name:"M4 / Parramatta Rd",base:0.75 },
+  { lat:-33.9200,lng:151.2100,name:"Airport / M5 Merge",base:0.8 },
+  { lat:-33.8800,lng:151.2300,name:"Eastern Distributor",base:0.7 },
+  { lat:-33.8650,lng:151.2200,name:"Kings Cross Tunnel",base:0.65 },
+  { lat:-33.8750,lng:151.1700,name:"Victoria Rd / Parramatta",base:0.6 },
+  { lat:-33.9050,lng:151.2300,name:"South Eastern Fwy",base:0.55 },
+  { lat:-33.8450,lng:151.2050,name:"Cahill Expressway",base:0.6 },
+  { lat:-33.8200,lng:151.1900,name:"Lane Cove Rd",base:0.45 },
+  { lat:-33.8950,lng:151.1600,name:"M7 / Great Western",base:0.5 },
+];
+
+// Parking locations (TfNSW Car Park API nodes + CBD spots)
+const PARKING_NODES = [
+  { lat:-33.8688,lng:151.2100,name:"Secure Parking - Kent St",total:480,base:0.85 },
+  { lat:-33.8720,lng:151.2060,name:"Wilson - Goulburn St",total:350,base:0.80 },
+  { lat:-33.8665,lng:151.2120,name:"Domain Carpark",total:1000,base:0.60 },
+  { lat:-33.8600,lng:151.2080,name:"MLC Centre",total:600,base:0.75 },
+  { lat:-33.8730,lng:151.1980,name:"Pyrmont - Jones Bay",total:300,base:0.45 },
+  { lat:-33.8900,lng:151.2100,name:"Redfern P&R",total:250,base:0.55 },
+  { lat:-33.8350,lng:151.2050,name:"North Sydney P&R",total:800,base:0.70 },
+  { lat:-33.9200,lng:151.2050,name:"Airport P&R T1",total:2500,base:0.65 },
+  { lat:-33.8800,lng:151.2250,name:"Bondi Junction P&R",total:700,base:0.78 },
+  { lat:-33.8680,lng:151.2040,name:"Town Hall Station",total:400,base:0.88 },
+];
+
+// Major event venues with typical events
+const EVENT_VENUES = [
+  { lat:-33.8916683,lng:151.2248148,name:"Sydney Cricket Ground",venue:"SCG",
+    events:["BBL Finals Night","Test Cricket Day 3","Sheffield Shield"] },
+  { lat:-33.889067,lng:151.225364,name:"Allianz Stadium",venue:"Allianz",
+    events:["NRL — Roosters vs Storm","AFL — Sydney Swans vs GWS","Taylor Swift Night 5"] },
+  { lat:-33.8443,lng:151.06210,name:"Sydney Olympic Park",venue:"Qudos Bank Arena",
+    events:["NRL Finals","Beyoncé — Renaissance Tour","Rugby League WC"] },
+  { lat:-33.8748582,lng:151.199509,name:"Darling Harbour",venue:"ICC Sydney",
+    events:["Tech Summit 2026","Fine Food Australia","Sydney Boat Show"] },
+  { lat:-33.8567844,lng:151.2152967,name:"Sydney Opera House",venue:"Opera House",
+    events:["Vivid Sydney Opening","Symphony — Beethoven 9th","NYE Gala"] },
+  { lat:-33.8947746,lng:151.2270446,name:"Entertainment Quarter",venue:"EQ",
+    events:["Sydney Film Festival","Mardi Gras Party","Laneway Festival"] },
+];
+
+// ── Time helpers ───────────────────────────────────────────────
+function getHourFactor() {
+  const h = new Date().getHours();
+  if (h < 6) return 0.15;
+  if (h < 8) return 0.55;
+  if (h < 10) return 0.95;  // AM peak
+  if (h < 12) return 0.70;
+  if (h < 14) return 0.65;
+  if (h < 16) return 0.72;
+  if (h < 19) return 0.98;  // PM peak
+  if (h < 21) return 0.60;
+  if (h < 23) return 0.35;
+  return 0.20;
+}
+function getDayFactor() {
+  const d = new Date().getDay();
+  if (d === 0 || d === 6) return 0.65; // weekend
+  return 1.0;
+}
+function jitter(val, spread=0.08) {
+  return Math.min(1, Math.max(0, val + (Math.random()-0.5)*spread));
+}
+
+// ── Live data fetches ──────────────────────────────────────────
+async function fetchWeather() {
+  try {
+    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=-33.8688&longitude=151.2093&current=temperature_2m,wind_speed_10m,precipitation&timezone=Australia/Sydney');
+    const d = await r.json();
+    const c = d.current;
+    state.weather = c;
+    document.getElementById('hw-temp').textContent = c.temperature_2m?.toFixed(1) ?? '—';
+    document.getElementById('hw-wind').textContent = c.wind_speed_10m?.toFixed(0) ?? '—';
+    document.getElementById('hw-rain').textContent = c.precipitation ?? '0.0';
+  } catch(e) { console.warn('Weather fetch failed', e); }
+}
+
+async function fetchAirQuality() {
+  try {
+    const r = await fetch('https://air-quality-api.open-meteo.com/v1/air-quality?latitude=-33.8688&longitude=151.2093&current=pm2_5,pm10,nitrogen_dioxide,ozone&timezone=Australia/Sydney');
+    const d = await r.json();
+    const c = d.current;
+    state.air = c;
+    const pm = c.pm2_5 ?? 0;
+    const no2 = c.nitrogen_dioxide ?? 0;
+    const o3 = c.ozone ?? 0;
+    // Compute AQI-like score
+    const aqi = Math.round(pm * 4 + no2 * 0.5 + o3 * 0.3);
+    const aqiPct = Math.min(100, aqi);
+    let grade, col;
+    if (aqi < 25) { grade='Good'; col='#4ade80'; }
+    else if (aqi < 50) { grade='Moderate'; col='#facc15'; }
+    else if (aqi < 100) { grade='Unhealthy'; col='#fb923c'; }
+    else { grade='Hazardous'; col='#f87171'; }
+
+    document.getElementById('aqi-val').textContent = aqi;
+    document.getElementById('aqi-grade').textContent = grade;
+    document.getElementById('aqi-bar').style.width = aqiPct+'%';
+    document.getElementById('aqi-bar').style.background = col;
+    document.getElementById('hw-pm').textContent = pm.toFixed(1);
+
+    document.getElementById('ozone-val').textContent = o3.toFixed(0);
+    document.getElementById('ozone-bar').style.width = Math.min(100, o3/2)+'%';
+    document.getElementById('no2-val').textContent = no2.toFixed(1);
+    document.getElementById('no2-bar').style.width = Math.min(100, no2*3)+'%';
+  } catch(e) { console.warn('Air quality fetch failed', e); }
+}
+
+// ── Events (simulated with realistic Sydney data) ──────────────
+function loadEvents() {
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+  // Pick events based on day
+  const activeEvents = EVENT_VENUES.map((v,i) => ({
+    ...v,
+    event: v.events[i % v.events.length],
+    time: ['13:00','14:30','17:00','19:00','19:30','20:00'][i],
+    crowd: [42000,45000,21000,8000,5200,12000][i],
+    impact: i < 2 ? 'high' : i < 4 ? 'med' : 'low',
+    active: isWeekend || i < 3
+  })).filter(e => e.active);
+
+  const list = document.getElementById('events-list');
+  list.innerHTML = activeEvents.slice(0,4).map(e => `
+    <div class="event-item" onclick="flyToEvent(${e.lat},${e.lng})">
+      <div class="event-name">${e.event}</div>
+      <div class="event-meta">${e.venue} · ${e.time} · ${e.crowd.toLocaleString()} expected</div>
+      <span class="event-impact impact-${e.impact}">${e.impact === 'high' ? '🔴 HIGH IMPACT' : e.impact === 'med' ? '🟡 MEDIUM' : '🟢 LOW'}</span>
+    </div>
+  `).join('');
+  return activeEvents;
+}
+
+// ── Map setup ──────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { zoomControl: false, attributionControl: false })
+    .setView([SYD.lat, SYD.lng], 13);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18, subdomains: 'abcd'
+  }).addTo(map);
+
+  L.control.zoom({ position: 'topright' }).addTo(map);
+
+  map.on('moveend', drawHeatmap);
+  map.on('zoomend', drawHeatmap);
+
+  initHeatCanvas();
+}
+
+// ── Heatmap ────────────────────────────────────────────────────
+function initHeatCanvas() {
+  heatCanvas = document.getElementById('heatmap-canvas');
+  const mapDiv = document.getElementById('map');
+  heatCanvas.width = mapDiv.offsetWidth;
+  heatCanvas.height = mapDiv.offsetHeight;
+  heatCtx = heatCanvas.getContext('2d');
+  window.addEventListener('resize', () => {
+    heatCanvas.width = mapDiv.offsetWidth;
+    heatCanvas.height = mapDiv.offsetHeight;
+    drawHeatmap();
+  });
+}
+
+function latLngToPixel(lat, lng) {
+  const p = map.latLngToContainerPoint([lat, lng]);
+  return p;
+}
+
+function drawHeatmap() {
+  if (!heatCtx || !map) return;
+  heatCtx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+  if (!state.layers.traffic && !state.layers.parking) return;
+
+  const hFactor = getHourFactor();
+  const dFactor = getDayFactor();
+
+  const nodes = [];
+  if (state.layers.traffic) {
+    TRAFFIC_NODES.forEach(n => {
+      nodes.push({ lat: n.lat, lng: n.lng, weight: jitter(n.base * hFactor * dFactor, 0.05), type: 'traffic' });
+    });
+  }
+  if (state.layers.parking) {
+    PARKING_NODES.forEach(n => {
+      nodes.push({ lat: n.lat, lng: n.lng, weight: jitter(n.base * hFactor * 0.85 * dFactor, 0.06), type: 'parking' });
+    });
+  }
+
+  // Radius scales with zoom
+  const zoom = map.getZoom();
+  const radius = Math.max(40, zoom * 6);
+
+  nodes.forEach(n => {
+    const p = latLngToPixel(n.lat, n.lng);
+    if (p.x < -radius || p.y < -radius || p.x > heatCanvas.width + radius || p.y > heatCanvas.height + radius) return;
+
+    const grad = heatCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+    const w = n.weight;
+
+    let c1, c2;
+    if (n.type === 'traffic') {
+      if (w > 0.8) { c1='rgba(248,113,113,0.75)'; c2='rgba(248,113,113,0)'; }
+      else if (w > 0.6) { c1='rgba(249,115,22,0.65)'; c2='rgba(249,115,22,0)'; }
+      else if (w > 0.4) { c1='rgba(250,204,21,0.55)'; c2='rgba(250,204,21,0)'; }
+      else { c1='rgba(74,222,128,0.45)'; c2='rgba(74,222,128,0)'; }
+    } else {
+      if (w > 0.8) { c1='rgba(56,189,248,0.60)'; c2='rgba(56,189,248,0)'; }
+      else if (w > 0.5) { c1='rgba(56,189,248,0.40)'; c2='rgba(56,189,248,0)'; }
+      else { c1='rgba(56,189,248,0.20)'; c2='rgba(56,189,248,0)'; }
+    }
+    grad.addColorStop(0, c1);
+    grad.addColorStop(1, c2);
+    heatCtx.beginPath();
+    heatCtx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    heatCtx.fillStyle = grad;
+    heatCtx.fill();
+  });
+}
+
+// ── Markers ────────────────────────────────────────────────────
+function createIcon(emoji, bg) {
+  return L.divIcon({
+    className: 'custom-marker',
+    html: `<div class="marker-icon" style="background:${bg};box-shadow:0 0 0 2px ${bg}33">${emoji}</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14]
+  });
+}
+
+function addEventMarkers(events) {
+  eventMarkers.forEach(m => map.removeLayer(m));
+  eventMarkers = [];
+  if (!state.layers.events) return;
+  events.forEach(e => {
+    const m = L.marker([e.lat, e.lng], { icon: createIcon('🏟', '#7c3aed') })
+      .bindPopup(`
+        <div class="popup-title">${e.event}</div>
+        <div class="popup-row"><span class="popup-key">Venue</span><span class="popup-val">${e.venue}</span></div>
+        <div class="popup-row"><span class="popup-key">Kickoff</span><span class="popup-val">${e.time}</span></div>
+        <div class="popup-row"><span class="popup-key">Expected crowd</span><span class="popup-val">${e.crowd.toLocaleString()}</span></div>
+        <div class="popup-row"><span class="popup-key">Traffic impact</span><span class="popup-val" style="color:${e.impact==='high'?'#f87171':e.impact==='med'?'#facc15':'#4ade80'}">${e.impact.toUpperCase()}</span></div>
+      `)
+      .addTo(map);
+    eventMarkers.push(m);
+  });
+}
+
+function addParkingMarkers() {
+  parkingMarkers.forEach(m => map.removeLayer(m));
+  parkingMarkers = [];
+  if (!state.layers.parking) return;
+  const hFactor = getHourFactor() * getDayFactor();
+  PARKING_NODES.forEach(n => {
+    const occ = Math.round(jitter(n.base * hFactor, 0.05) * n.total);
+    const pct = Math.round(occ / n.total * 100);
+    const avail = n.total - occ;
+    const emoji = pct > 85 ? '🔴' : pct > 60 ? '🟡' : '🟢';
+    const m = L.marker([n.lat, n.lng], { icon: createIcon('🅿', '#0ea5e9') })
+      .bindPopup(`
+        <div class="popup-title">${n.name}</div>
+        <div class="popup-row"><span class="popup-key">Capacity</span><span class="popup-val">${n.total}</span></div>
+        <div class="popup-row"><span class="popup-key">Occupied</span><span class="popup-val">${occ} (${pct}%)</span></div>
+        <div class="popup-row"><span class="popup-key">Available</span><span class="popup-val" style="color:${avail<50?'#f87171':'#4ade80'}">${avail} spaces</span></div>
+        <div class="popup-row"><span class="popup-key">Status</span><span class="popup-val">${emoji} ${pct>85?'Nearly full':pct>60?'Busy':'Available'}</span></div>
+      `)
+      .addTo(map);
+    parkingMarkers.push(m);
+  });
+}
+
+
+// ── Maritime AIS (aisstream.io) ────────────────────────────────
+const AIS_KEY = 'ed6a70f43dbb2d5f0597ddde25dbff68aa2be2fd';
+const AIS_BOXES = [[[-34.05, 151.05], [-33.75, 151.35]]];
+
+let aisSocket = null;
+const vessels = new Map();
+let vesselMarkers = [];
+
+const VESSEL_TYPE_NAMES = {
+  0:'Unknown',30:'Fishing',31:'Towing',32:'Towing-L',35:'Military',
+  36:'Sailing',37:'Pleasure',50:'Pilot',51:'SAR',52:'Tug',53:'Port Tender',
+  60:'Passenger',61:'Passenger',62:'Passenger',63:'Passenger',64:'Passenger',
+  70:'Cargo',71:'Cargo',72:'Cargo',73:'Cargo',74:'Cargo',
+  80:'Tanker',81:'Tanker',82:'Tanker',83:'Tanker',84:'Tanker',
+  90:'Other',
+};
+
+function vesselEmoji(t) {
+  const g = Math.floor((t||0)/10)*10;
+  if (g===60) return '\u{1F6F3}';
+  if (g===70) return '\u{1F6A2}';
+  if (g===80) return '\u{1F6E2}';
+  if (t===52) return '\u2693';
+  if (t===36) return '\u26F5';
+  if (t===37) return '\u{1F6A4}';
+  if (t===30) return '\u{1F3A3}';
+  if (t===51) return '\u{1F198}';
+  return '\u{1F6A2}';
+}
+
+function vesselColor(t) {
+  const g = Math.floor((t||0)/10)*10;
+  if (g===60) return '#f59e0b';
+  if (g===70) return '#22d3ee';
+  if (g===80) return '#f97316';
+  if (t===52) return '#a78bfa';
+  if (t===36||t===37) return '#4ade80';
+  return '#94a3b8';
+}
+
+function connectAIS() {
+  if (aisSocket) { try { aisSocket.close(); } catch(e){} aisSocket = null; }
+  const statusEl = document.getElementById('ais-status');
+  if (statusEl) statusEl.textContent = 'CONNECTING…';
+  try {
+    aisSocket = new WebSocket('wss://stream.aisstream.io/v0/stream');
+    aisSocket.onopen = () => {
+      aisSocket.send(JSON.stringify({
+        APIKey: AIS_KEY,
+        BoundingBoxes: AIS_BOXES,
+        FilterMessageTypes: ['PositionReport','ShipStaticData']
+      }));
+      if (statusEl) statusEl.textContent = 'LIVE';
+    };
+    aisSocket.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        const meta = msg.Metadata;
+        const mmsi = meta?.MMSI;
+        if (!mmsi) return;
+        const existing = vessels.get(mmsi) || {};
+        if (msg.MessageType === 'PositionReport') {
+          const pr = msg.Message?.PositionReport;
+          if (!pr) return;
+          const lat = meta.latitude ?? pr.Latitude;
+          const lng = meta.longitude ?? pr.Longitude;
+          if (!lat || !lng) return;
+          vessels.set(mmsi, { ...existing, mmsi, lat, lng,
+            speed: pr.Sog!=null ? pr.Sog.toFixed(1) : '—',
+            heading: pr.TrueHeading < 511 ? pr.TrueHeading : (pr.Cog || 0),
+            navStatus: pr.NavigationalStatus ?? 0,
+            name: existing.name || (meta.ShipName||'').trim() || ('MMSI '+mmsi),
+            typeCode: existing.typeCode || 0,
+          });
+        } else if (msg.MessageType === 'ShipStaticData') {
+          const sd = msg.Message?.ShipStaticData;
+          if (!sd) return;
+          vessels.set(mmsi, { ...existing, mmsi,
+            name: (sd.Name||'').trim() || existing.name || ('MMSI '+mmsi),
+            typeCode: sd.Type ?? existing.typeCode ?? 0,
+            destination: (sd.Destination||'').trim(),
+            lat: existing.lat, lng: existing.lng,
+          });
+        }
+        if (state.layers.maritime) updateVesselMarkers();
+        updateVesselSidebar();
+      } catch(e) {}
+    };
+    aisSocket.onerror = () => { if (statusEl) statusEl.textContent = 'ERROR'; };
+    aisSocket.onclose = () => {
+      if (statusEl) statusEl.textContent = 'RECONNECTING…';
+      setTimeout(() => { if (state.layers.maritime) connectAIS(); }, 5000);
+    };
+  } catch(e) { if (statusEl) statusEl.textContent = 'UNAVAILABLE'; }
+}
+
+function disconnectAIS() {
+  if (aisSocket) { try { aisSocket.close(); } catch(e){} aisSocket = null; }
+  const statusEl = document.getElementById('ais-status');
+  if (statusEl) statusEl.textContent = 'OFF';
+  vesselMarkers.forEach(m => map.removeLayer(m));
+  vesselMarkers = [];
+}
+
+function updateVesselMarkers() {
+  vesselMarkers.forEach(m => { try { map.removeLayer(m); } catch(e){} });
+  vesselMarkers = [];
+  if (!state.layers.maritime || !map) return;
+  vessels.forEach((v) => {
+    if (!v.lat || !v.lng) return;
+    const col = vesselColor(v.typeCode);
+    const em = vesselEmoji(v.typeCode);
+    const typeName = VESSEL_TYPE_NAMES[v.typeCode] || 'Vessel';
+    const hdg = (v.heading || 0);
+    const icon = L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="width:26px;height:26px;border-radius:50%;background:${col};border:2px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:12px;">${em}</div>`,
+      iconSize: [26,26], iconAnchor: [13,13]
+    });
+    const navLabels = ['Under way','Anchored','Not under command','Restricted','Constrained','Moored','Aground','Fishing','Sailing'];
+    const navText = navLabels[v.navStatus] || 'Unknown';
+    const m = L.marker([v.lat, v.lng], { icon })
+      .bindPopup(`
+        <div class="popup-title">${v.name || 'Unknown Vessel'}</div>
+        <div class="popup-row"><span class="popup-key">Type</span><span class="popup-val">${typeName}</span></div>
+        <div class="popup-row"><span class="popup-key">Speed</span><span class="popup-val">${v.speed} kn</span></div>
+        <div class="popup-row"><span class="popup-key">Heading</span><span class="popup-val">${Math.round(hdg)}°</span></div>
+        <div class="popup-row"><span class="popup-key">Status</span><span class="popup-val">${navText}</span></div>
+        ${v.destination ? `<div class="popup-row"><span class="popup-key">Destination</span><span class="popup-val">${v.destination}</span></div>` : ''}
+        <div class="popup-row"><span class="popup-key">MMSI</span><span class="popup-val" style="color:var(--muted)">${v.mmsi}</span></div>
+      `)
+      .addTo(map);
+    vesselMarkers.push(m);
+  });
+}
+
+function updateVesselSidebar() {
+  const active = [...vessels.values()].filter(v => v.lat && v.lng);
+  const countEl = document.getElementById('vessel-count');
+  const barEl = document.getElementById('vessel-bar');
+  const listEl = document.getElementById('vessel-list');
+  if (countEl) countEl.textContent = active.length;
+  if (barEl) barEl.style.width = Math.min(100, active.length * 3) + '%';
+  if (listEl) {
+    const named = active.filter(v => v.name && !v.name.startsWith('MMSI')).slice(-8).reverse();
+    listEl.innerHTML = named.map(v =>
+      `<span style="color:${vesselColor(v.typeCode)}">${vesselEmoji(v.typeCode)}</span> <span style="color:var(--text)">${v.name}</span>${v.speed && v.speed!=='—' ? ` <span style="color:var(--muted)">· ${v.speed}kn</span>` : ''}<br>`
+    ).join('');
+  }
+}
+
+// ── Congestion score ───────────────────────────────────────────
+function updateScore() {
+  const hFactor = getHourFactor();
+  const dFactor = getDayFactor();
+  const base = TRAFFIC_NODES.reduce((s,n) => s + n.base, 0) / TRAFFIC_NODES.length;
+  const score = Math.round(jitter(base * hFactor * dFactor, 0.04) * 100);
+  const h = new Date().getHours();
+  const isPeak = (h >= 7 && h <= 9) || (h >= 16 && h <= 19);
+
+  let desc, col;
+  if (score < 30) { desc='City is flowing freely'; col='#4ade80'; }
+  else if (score < 50) { desc='Light congestion building'; col='#86efac'; }
+  else if (score < 65) { desc='Moderate traffic — allow extra time'; col='#facc15'; }
+  else if (score < 80) { desc='Heavy traffic — ' + (isPeak ? 'peak hour' : 'incident likely'); col='#fb923c'; }
+  else { desc='Severe congestion — consider alternatives'; col='#f87171'; }
+
+  document.getElementById('score-num').textContent = score;
+  document.getElementById('score-num').style.color = col;
+  document.getElementById('score-desc').textContent = desc;
+
+  // Arc
+  const arc = document.getElementById('score-arc');
+  const circumference = 213.6;
+  arc.style.strokeDashoffset = circumference - (score / 100) * circumference;
+  arc.style.stroke = col;
+}
+
+// ── Layer toggle ───────────────────────────────────────────────
+function toggleLayer(btn) {
+  const layer = btn.dataset.layer;
+  state.layers[layer] = !state.layers[layer];
+  btn.classList.toggle('active', state.layers[layer]);
+  if (layer !== 'maritime') btn.querySelector('.layer-status').textContent = state.layers[layer] ? (layer === 'events' ? 'TODAY' : 'LIVE') : 'OFF';
+  else if (!state.layers.maritime) btn.querySelector('.layer-status').textContent = 'OFF';
+  drawHeatmap();
+  if (layer === 'events') addEventMarkers(window._events || []);
+  if (layer === 'parking') addParkingMarkers();
+  if (layer === 'maritime') {
+    if (state.layers.maritime) connectAIS();
+    else disconnectAIS();
+  }
+}
+
+window.flyToEvent = (lat, lng) => { map.setView([lat, lng], 15); };
+
+// ── Clock ──────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('live-time').textContent =
+    now.toLocaleDateString('en-AU', {weekday:'short',day:'numeric',month:'short'}) + ' ' +
+    now.toLocaleTimeString('en-AU', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+// ── Boot ───────────────────────────────────────────────────────
+async function boot() {
+  await new Promise(r => setTimeout(r, 2200));
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display = 'grid';
+
+  initMap();
+
+  // Load data
+  await Promise.all([fetchWeather(), fetchAirQuality()]);
+  const events = loadEvents();
+  window._events = events;
+
+  addEventMarkers(events);
+  addParkingMarkers();
+  updateScore();
+  drawHeatmap();
+
+  // Clock
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // Refresh data every 5 min
+  setInterval(() => {
+    fetchWeather();
+    fetchAirQuality();
+    updateScore();
+    drawHeatmap();
+    addParkingMarkers();
+  }, 300000);
+
+  // Connect maritime AIS
+  connectAIS();
+
+  // Refresh heatmap gently every 30s to simulate live drift
+  setInterval(() => { drawHeatmap(); updateScore(); }, 30000);
+}
+
+boot();
+</script>
+</body>
+</html>
