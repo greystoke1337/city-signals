@@ -1,0 +1,12 @@
+{
+  "name": "city-signals",
+  "version": "1.0.0",
+  "description": "City Signals — AIS proxy server for live maritime data",
+  "main": "ais-proxy.js",
+  "scripts": {
+    "start": "node ais-proxy.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
