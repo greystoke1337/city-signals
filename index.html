@@ -695,8 +695,8 @@ function updateVesselMarkers() {
     const hdg = (v.heading || 0);
     const icon = L.divIcon({
       className: 'custom-marker',
-      html: `<div style="width:26px;height:26px;border-radius:50%;background:${col};border:2px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:12px;">${em}</div>`,
-      iconSize: [26,26], iconAnchor: [13,13]
+      html: `<svg width="24" height="24" viewBox="0 0 24 24" style="transform:rotate(${hdg}deg);filter:drop-shadow(0 0 3px ${col})"><polygon points="12,2 4,20 12,16 20,20" fill="${col}" stroke="rgba(255,255,255,0.5)" stroke-width="1"/></svg>`,
+      iconSize: [24,24], iconAnchor: [12,12]
     });
     const navLabels = ['Under way','Anchored','Not under command','Restricted','Constrained','Moored','Aground','Fishing','Sailing'];
     const navText = navLabels[v.navStatus] || 'Unknown';
