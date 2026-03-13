@@ -57,7 +57,32 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.url === '/api/traffic') {
-    return proxyTfNSW('/v1/live/hazards', res);
+    // Fetch open incidents, roadworks, and major events in parallel and merge
+    const categories = ['incident', 'roadwork', 'majorevent'];
+    const fetches = categories.map(cat => new Promise((resolve) => {
+      const opts = {
+        hostname: 'api.transport.nsw.gov.au',
+        path: `/v1/live/hazards/${cat}/open`,
+        headers: { 'Authorization': 'apikey ' + TFNSW_KEY, 'Accept': 'application/json' },
+      };
+      https.get(opts, (upstream) => {
+        const chunks = [];
+        upstream.on('data', c => chunks.push(c));
+        upstream.on('end', () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+          catch(e) { resolve({ type: 'FeatureCollection', features: [] }); }
+        });
+      }).on('error', () => resolve({ type: 'FeatureCollection', features: [] }));
+    }));
+    return Promise.all(fetches).then(results => {
+      const merged = {
+        type: 'FeatureCollection',
+        features: results.flatMap(r => r.features || []),
+      };
+      console.log(`[tfnsw] Traffic: ${merged.features.length} open hazards`);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify(merged));
+    });
   }
   if (req.url === '/api/carpark') {
     return proxyTfNSW('/v1/carpark', res);
